@@ -174,7 +174,11 @@ for i, train_batch in enumerate(dataset):
     else:
         train_ep = inc_train_ep
 
-    cur_acts = None  # variable used to gather latent activations
+    chosen_latent_acts = None  # variable used to gather latent activations
+    chosen_y = None
+
+    # maximum number of latent patterns to gather for saving in memory
+    h = rm_sz // (i + 1)
 
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
@@ -235,12 +239,14 @@ for i, train_batch in enumerate(dataset):
             if ep == 0:  #
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:
-                    cur_acts = copy.deepcopy(lat_acts)
-                else:
-                    cur_acts = torch.cat((cur_acts, lat_acts), 0)
+                    chosen_latent_acts = copy.deepcopy(lat_acts[:h])
+                    chosen_y = y_mb[:h]
+                elif chosen_latent_acts.size(0) < h:
+                    chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:h-chosen_latent_acts.size(0)]), 0)
+                    chosen_y = torch.cat([chosen_y, y_mb[:h-chosen_latent_acts.size(0)]], 0)
 
             pred_label = torch.argmax(logits, 1)
-            acc.update(torch.eq(pred_label, y_mb).sum().item(), len(y_mb))
+            acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
 
             loss = criterion(logits, y_mb)
             if reg_lambda != 0:
@@ -273,15 +279,11 @@ for i, train_batch in enumerate(dataset):
 
     # how many patterns to save for next iter
     # replay memory should contain equal number of patterns (h) from each batch
-    h = min(rm_sz // (i + 1), cur_acts.size(0))
     print("h", h)
+    print("cur_acts sz:", chosen_latent_acts.size(0))
+    assert len(chosen_latent_acts) < h
 
-    print("cur_acts sz:", cur_acts.size(0))
-    # randomly choose h latent activation patterns (without replacement) from current batch
-    idxs_cur = np.random.choice(
-        cur_acts.size(0), h, replace=False
-    )
-    rm_add = [cur_acts[idxs_cur], train_y[idxs_cur]]
+    rm_add = [chosen_latent_acts, chosen_y]
     print("rm_add size", rm_add[0].size(0))
 
     # replace patterns in random memory
