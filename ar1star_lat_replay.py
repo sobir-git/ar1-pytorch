@@ -28,6 +28,7 @@ from utils import *
 import configparser
 import argparse
 from pprint import pprint
+from models.mobilenet import MyMobilenetV1
 from torch.utils.tensorboard import SummaryWriter
 
 # --------------------------------- Setup --------------------------------------
