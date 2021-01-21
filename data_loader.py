@@ -159,6 +159,14 @@ class CORE50(object):
         run = self.run
 
         test_idx_list = self.LUP[scen][run][-1]
+        test_y = self.labels[scen][run][-1]
+        test_y = np.asarray(test_y, dtype=np.float32)
+
+        if reduced:
+            # reduce test set 20 substampling
+            test_idx_list = test_idx_list[::20]
+            reduced_idx = range(0, test_y.shape[0], 20)
+            test_y = np.take(test_y, reduced_idx, axis=0)
 
         if self.preload:
             test_x = np.take(self.x, test_idx_list, axis=0).astype(np.float32)
@@ -170,15 +178,6 @@ class CORE50(object):
 
             # test imgs
             test_x = self.get_batch_from_paths(test_paths).astype(np.float32)
-
-        test_y = self.labels[scen][run][-1]
-        test_y = np.asarray(test_y, dtype=np.float32)
-
-        if reduced:
-            # reduce test set 20 substampling
-            idx = range(0, test_y.shape[0], 20)
-            test_x = np.take(test_x, idx, axis=0)
-            test_y = np.take(test_y, idx, axis=0)
 
         return test_x, test_y
 

@@ -37,6 +37,10 @@ from torch.utils.tensorboard import SummaryWriter
 parser = argparse.ArgumentParser(description='Run CL experiments')
 parser.add_argument('--name', dest='exp_name',  default='DEFAULT',
                     help='name of the experiment you want to run.')
+parser.add_argument('--datadir', default='./core50', help='Folder where core50 dataset exists: sessions folders, paths.pkl, LUP.pkl, labels.pkl')
+parser.add_argument('--logdir', default='../logs')
+parser.add_argument('--config', default='./params.cfg', help='Configuration file containing hyperparameters, etc.')
+
 args = parser.parse_args()
 
 # set cuda device (based on your hardware)
@@ -45,7 +49,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 # recover config file for the experiment
 config = configparser.ConfigParser()
-config.read("params.cfg")
+config.read(args.config)
 exp_config = config[args.exp_name]
 print("Experiment name:", args.exp_name)
 pprint(dict(exp_config))
@@ -72,7 +76,7 @@ latent_layer_num = eval(exp_config['latent_layer_num'])
 reg_lambda = eval(exp_config['reg_lambda'])
 
 # setting up log dir for tensorboard
-log_dir = 'logs/' + exp_name
+log_dir = args.logdir + '/' + exp_name
 writer = SummaryWriter(log_dir)
 
 # Saving params
@@ -84,7 +88,7 @@ tot_it_step = 0
 rm = None
 
 # Create the dataset object
-dataset = CORE50(root='/home/admin/ssd_data/core50', scenario="nicv2_391")
+dataset = CORE50(root=args.datadir, scenario=exp_config['scenario'])
 preproc = preprocess_imgs
 
 # Get the fixed test set
