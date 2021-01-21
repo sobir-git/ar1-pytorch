@@ -240,10 +240,10 @@ for i, train_batch in enumerate(dataset):
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:
                     chosen_latent_acts = copy.deepcopy(lat_acts[:h])
-                    chosen_y = y_mb[:h]
+                    chosen_y = y_mb[:h].cpu()
                 elif chosen_latent_acts.size(0) < h:
                     chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:h-chosen_latent_acts.size(0)]), 0)
-                    chosen_y = torch.cat([chosen_y, y_mb[:h-chosen_latent_acts.size(0)]], 0)
+                    chosen_y = torch.cat([chosen_y, y_mb[:h-chosen_latent_acts.size(0)].cpu()], 0)
 
             pred_label = torch.argmax(logits, 1)
             acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
