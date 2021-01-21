@@ -281,7 +281,7 @@ for i, train_batch in enumerate(dataset):
     # replay memory should contain equal number of patterns (h) from each batch
     print("h", h)
     print("cur_acts sz:", chosen_latent_acts.size(0))
-    assert len(chosen_latent_acts) < h
+    assert len(chosen_latent_acts) <= h
 
     rm_add = [chosen_latent_acts, chosen_y]
     print("rm_add size", rm_add[0].size(0))
