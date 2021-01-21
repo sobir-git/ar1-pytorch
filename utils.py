@@ -165,7 +165,7 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
 
         loss = criterion(logits, y)
         pred_label = torch.argmax(logits.data, 1)
-        acc.update(torch.eq(pred_label, y.data).sum().item(), len(y))
+        acc.update(torch.eq(pred_label, y.data).mean().item(), len(y))
         ave_loss.update(loss.item(), len(y))
         for y_pred, y_true in zip(pred_label.tolist(), y.tolist()):
             accs[y_true].update(y_true == y_pred)
