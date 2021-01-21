@@ -135,7 +135,7 @@ class CORE50(object):
             for idx in train_idx_list:
                 train_paths.append(os.path.join(self.root, self.paths[idx]))
             # loading imgs
-            train_x = self.get_batch_from_paths(train_paths).astype(np.float32)
+            train_x = self.get_batch_from_paths(train_paths)
 
         # In either case we have already loaded the y
         if self.cumul:

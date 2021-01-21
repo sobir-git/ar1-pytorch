@@ -139,7 +139,6 @@ for i, train_batch in enumerate(dataset):
         )
 
     train_x, train_y = train_batch
-    train_x = preproc(train_x)
 
     cur_classes = None
     if i == 0:
@@ -168,9 +167,6 @@ for i, train_batch in enumerate(dataset):
     model = maybe_cuda(model, use_cuda=use_cuda)
     acc = AverageMeter()
     ave_loss = 0
-
-    # convert train data to torch tensors
-    train_x = torch.from_numpy(train_x).type(torch.FloatTensor)
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
     if i == 0:
@@ -186,16 +182,17 @@ for i, train_batch in enumerate(dataset):
 
         print("training ep: ", ep)
         ave_loss = AverageMeter()  # compute average loss for this epoch
+        train_sz = train_x.shape[0]
 
         # computing how many patterns to inject in the latent replay layer
         if i > 0:
             # a minibatch consists of patterns from the current batch and replay memory
-            cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)  # number of patterns from current batch
-            it_x_ep = train_x.size(0) // cur_sz  # number of iterations to complete the batch
+            cur_sz = train_sz // ((train_sz + rm_sz) // mb_size)  # number of patterns from current batch
+            it_x_ep = train_sz // cur_sz  # number of iterations to complete the batch
             n2inject = max(0, mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
             n2inject = 0   # in the initial batch, the replay memory is empty
-        print("total sz:", train_x.size(0) + rm_sz)
+        print("total sz:", train_sz + rm_sz)
         print("n2inject", n2inject)
         print("it x ep: ", it_x_ep)
 
@@ -208,7 +205,12 @@ for i, train_batch in enumerate(dataset):
             start = it * (mb_size - n2inject)
             end = (it + 1) * (mb_size - n2inject)
             # construct the initial mini-batch from training set
-            x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
+            x_mb = train_x[start:end].astype(np.float32)
+            x_mb = preproc(x_mb)
+            # convert train data to torch tensors
+            x_mb = torch.from_numpy(x_mb).type(torch.FloatTensor)
+
+            x_mb = maybe_cuda(x_mb, use_cuda=use_cuda)
 
             if i == 0:  # if the initial batch, then no latent patterns
                 lat_mb_x = None
