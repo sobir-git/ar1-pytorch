@@ -24,7 +24,6 @@ from data_loader import CORE50
 import copy
 import os
 import json
-from models.mobilenet import MyMobilenetV1
 from utils import *
 import configparser
 import argparse
@@ -35,9 +34,10 @@ from torch.utils.tensorboard import SummaryWriter
 
 # recover exp configuration name
 parser = argparse.ArgumentParser(description='Run CL experiments')
-parser.add_argument('--name', dest='exp_name',  default='DEFAULT',
+parser.add_argument('--name', dest='exp_name', default='DEFAULT',
                     help='name of the experiment you want to run.')
-parser.add_argument('--datadir', default='./core50', help='Folder where core50 dataset exists: sessions folders, paths.pkl, LUP.pkl, labels.pkl')
+parser.add_argument('--datadir', default='./core50',
+                    help='Folder where core50 dataset exists: sessions folders, paths.pkl, LUP.pkl, labels.pkl')
 parser.add_argument('--logdir', default='../logs')
 parser.add_argument('--config', default='./params.cfg', help='Configuration file containing hyperparameters, etc.')
 
@@ -61,8 +61,8 @@ use_cuda = eval(exp_config['use_cuda'])
 init_lr = eval(exp_config['init_lr'])
 inc_lr = eval(exp_config['inc_lr'])
 mb_size = eval(exp_config['mb_size'])
-init_train_ep = eval(exp_config['init_train_ep'])
-inc_train_ep = eval(exp_config['inc_train_ep'])
+init_train_ep = eval(exp_config['init_train_ep'])  # training epochs for the initial batch
+inc_train_ep = eval(exp_config['inc_train_ep'])  # training epochs for incremental batches
 init_update_rate = eval(exp_config['init_update_rate'])
 inc_update_rate = eval(exp_config['inc_update_rate'])
 max_r_max = eval(exp_config['max_r_max'])
@@ -102,8 +102,10 @@ replace_bn_with_brn(
     max_r_max=max_r_max, max_d_max=max_d_max
 )
 model.saved_weights = {}
-model.past_j = {i:0 for i in range(50)}
-model.cur_j = {i:0 for i in range(50)}
+model.past_j = {i: 0 for i in range(50)}  # number of patterns of each class seen in the past
+model.cur_j = {i: 0 for i in range(50)}  # number of patterns of each class in the current batch
+
+ewcData, synData = None, None
 if reg_lambda != 0:
     # the regularization is based on Synaptic Intelligence as described in the
     # paper. ewcData is a list of two elements (best parametes, importance)
@@ -118,14 +120,14 @@ criterion = torch.nn.CrossEntropyLoss()
 
 # --------------------------------- Training -----------------------------------
 
+# we freeze the layer below the replay layer since the first batch
+freeze_up_to(model, freeze_below_layer, only_conv=False)
+
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
 
     if reg_lambda != 0:
         init_batch(model, ewcData, synData)
-
-    # we freeze the layer below the replay layer since the first batch
-    freeze_up_to(model, freeze_below_layer, only_conv=False)
 
     if i == 1:
         change_brn_pars(
@@ -138,11 +140,12 @@ for i, train_batch in enumerate(dataset):
     train_x, train_y = train_batch
     train_x = preproc(train_x)
 
+    cur_classes = None
     if i == 0:
-        cur_class = [int(o) for o in set(train_y)]
+        cur_classes = [int(o) for o in set(train_y)]
         model.cur_j = examples_per_class(train_y)
     else:
-        cur_class = [int(o) for o in set(train_y).union(set(rm[1]))]
+        cur_classes = [int(o) for o in set(train_y).union(set(rm[1]))]
         model.cur_j = examples_per_class(list(train_y) + list(rm[1]))
 
     print("----------- batch {0} -------------".format(i))
@@ -152,17 +155,20 @@ for i, train_batch in enumerate(dataset):
     model.train()
     model.lat_features.eval()
 
-    reset_weights(model, cur_class)
-    cur_ep = 0
+    # load the weights for the seen classes, reset others to zero
+    reset_weights(model, cur_classes)
 
+    # for the first batch, pad training set to be multiple of mini-batch size
+    it_x_ep = None
     if i == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
     shuffle_in_unison([train_x, train_y], in_place=True)
 
     model = maybe_cuda(model, use_cuda=use_cuda)
-    acc = None
+    acc = AverageMeter()
     ave_loss = 0
 
+    # convert train data to torch tensors
     train_x = torch.from_numpy(train_x).type(torch.FloatTensor)
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
@@ -171,41 +177,45 @@ for i, train_batch in enumerate(dataset):
     else:
         train_ep = inc_train_ep
 
+    cur_acts = None  # variable used to gather latent activations
+
+    # loop through current batch multiple epochs
+    # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
 
         print("training ep: ", ep)
-        correct_cnt, ave_loss = 0, 0
+        ave_loss = AverageMeter()  # compute average loss for this epoch
 
         # computing how many patterns to inject in the latent replay layer
         if i > 0:
-            cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)
-            it_x_ep = train_x.size(0) // cur_sz
-            n2inject = max(0, mb_size - cur_sz)
+            # a minibatch consists of patterns from the current batch and replay memory
+            cur_sz = train_x.size(0) // ((train_x.size(0) + rm_sz) // mb_size)  # number of patterns from current batch
+            it_x_ep = train_x.size(0) // cur_sz  # number of iterations to complete the batch
+            n2inject = max(0, mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
-            n2inject = 0
+            n2inject = 0   # in the initial batch, the replay memory is empty
         print("total sz:", train_x.size(0) + rm_sz)
         print("n2inject", n2inject)
         print("it x ep: ", it_x_ep)
 
         for it in range(it_x_ep):
 
-            if reg_lambda !=0:
+            if reg_lambda != 0:
                 pre_update(model, synData)
 
+            # compute start and end indices of the training set that go into the current mini-batch
             start = it * (mb_size - n2inject)
             end = (it + 1) * (mb_size - n2inject)
-
-            optimizer.zero_grad()
-
+            # construct the initial mini-batch from training set
             x_mb = maybe_cuda(train_x[start:end], use_cuda=use_cuda)
 
-            if i == 0:
+            if i == 0:  # if the initial batch, then no latent patterns
                 lat_mb_x = None
                 y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
 
-            else:
-                lat_mb_x = rm[0][it*n2inject: (it + 1)*n2inject]
-                lat_mb_y = rm[1][it*n2inject: (it + 1)*n2inject]
+            else:  # otherwise get latent replay patterns from memory
+                lat_mb_x = rm[0][it * n2inject: (it + 1) * n2inject]
+                lat_mb_y = rm[1][it * n2inject: (it + 1) * n2inject]
                 y_mb = maybe_cuda(
                     torch.cat((train_y[start:end], lat_mb_y), 0),
                     use_cuda=use_cuda)
@@ -216,57 +226,55 @@ for i, train_batch in enumerate(dataset):
             logits, lat_acts = model(
                 x_mb, latent_input=lat_mb_x, return_lat_acts=True)
 
-            # collect latent volumes only for the first ep
+            # collect latent volumes only for the first epoch
             # we need to store them to eventually add them into the external
             # replay memory
-            if ep == 0:
+            if ep == 0:  #
                 lat_acts = lat_acts.cpu().detach()
                 if it == 0:
                     cur_acts = copy.deepcopy(lat_acts)
                 else:
                     cur_acts = torch.cat((cur_acts, lat_acts), 0)
 
-            _, pred_label = torch.max(logits, 1)
-            correct_cnt += (pred_label == y_mb).sum()
+            pred_label = torch.argmax(logits, 1)
+            acc.update(torch.eq(pred_label, y_mb).sum().item(), len(y_mb))
 
             loss = criterion(logits, y_mb)
-            if reg_lambda !=0:
+            if reg_lambda != 0:
                 loss += compute_ewc_loss(model, ewcData, lambd=reg_lambda)
-            ave_loss += loss.item()
+            ave_loss.update(loss.item(), len(y_mb))
 
+            optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            if reg_lambda !=0:
+            if reg_lambda != 0:
                 post_update(model, synData)
-
-            acc = correct_cnt.item() / \
-                  ((it + 1) * y_mb.size(0))
-            ave_loss /= ((it + 1) * y_mb.size(0))
 
             if it % 10 == 0:
                 print(
                     '==>>> it: {}, avg. loss: {:.6f}, '
                     'running train acc: {:.3f}'
-                        .format(it, ave_loss, acc)
+                        .format(it, ave_loss.avg, acc.avg)
                 )
 
             # Log scalar values (scalar summary) to TB
-            tot_it_step +=1
-            writer.add_scalar('train_loss', ave_loss, tot_it_step)
-            writer.add_scalar('train_accuracy', acc, tot_it_step)
+            tot_it_step += 1
+            writer.add_scalar('train_loss', ave_loss.avg, tot_it_step)
+            writer.add_scalar('train_accuracy', acc.avg, tot_it_step)
 
-        cur_ep += 1
-
-    consolidate_weights(model, cur_class)
+    # at the end of the batch, consolidate weights
+    consolidate_weights(model, cur_classes)
     if reg_lambda != 0:
         update_ewc_data(model, ewcData, synData, 0.001, 1)
 
     # how many patterns to save for next iter
+    # replay memory should contain equal number of patterns (h) from each batch
     h = min(rm_sz // (i + 1), cur_acts.size(0))
     print("h", h)
 
     print("cur_acts sz:", cur_acts.size(0))
+    # randomly choose h latent activation patterns (without replacement) from current batch
     idxs_cur = np.random.choice(
         cur_acts.size(0), h, replace=False
     )
@@ -274,9 +282,9 @@ for i, train_batch in enumerate(dataset):
     print("rm_add size", rm_add[0].size(0))
 
     # replace patterns in random memory
-    if i == 0:
+    if i == 0:  # if initial batch, just copy chosen activations, nothing to replace
         rm = copy.deepcopy(rm_add)
-    else:
+    else:  # choose h patterns from the replay memory, which will be replaced with current patterns
         idxs_2_replace = np.random.choice(
             rm[0].size(0), h, replace=False
         )
@@ -285,20 +293,21 @@ for i, train_batch in enumerate(dataset):
             rm[1][idx] = copy.deepcopy(rm_add[1][j])
 
     set_consolidate_weights(model)
-    ave_loss, acc, accs = get_accuracy(
+    # test the model
+    test_avg_loss, test_acc, _ = get_accuracy(
         model, criterion, mb_size, test_x, test_y, preproc=preproc
     )
 
     # Log scalar values (scalar summary) to TB
-    writer.add_scalar('test_loss', ave_loss, i)
-    writer.add_scalar('test_accuracy', acc, i)
+    writer.add_scalar('test_loss', test_avg_loss, i)
+    writer.add_scalar('test_accuracy', test_acc, i)
 
     # update number examples encountered over time
     for c, n in model.cur_j.items():
         model.past_j[c] += n
 
     print("---------------------------------")
-    print("Accuracy: ", acc)
+    print("Accuracy: ", test_acc)
     print("---------------------------------")
 
 writer.close()

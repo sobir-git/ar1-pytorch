@@ -26,13 +26,14 @@ import numpy as np
 import torch
 from models.batch_renorm import BatchRenorm2D
 
+
 def shuffle_in_unison(dataset, seed=None, in_place=False):
     """
     Shuffle two (or more) list in unison. It's important to shuffle the images
     and the labels maintaining their correspondence.
 
         Args:
-            dataset (dict): list of shuffle with the same order.
+            dataset (iterable): list of shuffle with the same order.
             seed (int): set of fixed Cifar parameters.
             in_place (bool): if we want to shuffle the same data or we want
                              to return a new shuffled dataset.
@@ -78,7 +79,7 @@ def pad_data(dataset, mb_size):
     size. We assume they have the same shape.
 
         Args:
-            dataset (str): sets to pad to reach a multile of mb_size.
+            dataset: sets to pad to reach a multile of mb_size.
             mb_size (int): mini-batch size.
         Returns:
             list: padded data sets
@@ -107,6 +108,7 @@ def pad_data(dataset, mb_size):
     return dataset, it
 
 
+@torch.no_grad()
 def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
                  mask=None, preproc=None):
     """
@@ -127,13 +129,15 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
     """
 
     model.eval()
+    num_class = int(np.max(test_y) + 1)
 
-    correct_cnt, ave_loss = 0, 0
+    acc = AverageMeter()
+    ave_loss = AverageMeter()
+    accs = [AverageMeter() for _ in range(num_class)]
+
     model = maybe_cuda(model, use_cuda=use_cuda)
 
-    num_class = int(np.max(test_y) + 1)
-    hits_per_class = [0] * num_class
-    pattern_per_class = [0] * num_class
+    # number of iterations to complete the testset
     test_it = test_y.shape[0] // batch_size + 1
 
     test_x = torch.from_numpy(test_x).type(torch.FloatTensor)
@@ -160,25 +164,13 @@ def get_accuracy(model, criterion, batch_size, test_x, test_y, use_cuda=True,
             logits[:, idx] = -10e10
 
         loss = criterion(logits, y)
-        _, pred_label = torch.max(logits.data, 1)
-        correct_cnt += (pred_label == y.data).sum()
-        ave_loss += loss.item()
+        pred_label = torch.argmax(logits.data, 1)
+        acc.update(torch.eq(pred_label, y.data).sum().item(), len(y))
+        ave_loss.update(loss.item(), len(y))
+        for y_pred, y_true in zip(pred_label.tolist(), y.tolist()):
+            accs[y_true].update(y_true == y_pred)
 
-        for label in y.data:
-            pattern_per_class[int(label)] += 1
-
-        for i, pred in enumerate(pred_label):
-            if pred == y.data[i]:
-                hits_per_class[int(pred)] += 1
-
-    accs = np.asarray(hits_per_class) / \
-           np.asarray(pattern_per_class).astype(float)
-
-    acc = correct_cnt.item() * 1.0 / test_y.size(0)
-
-    ave_loss /= test_y.size(0)
-
-    return ave_loss, acc, accs
+    return ave_loss.avg, acc.avg, [a.avg for a in accs]
 
 
 def preprocess_imgs(img_batch, scale=True, norm=True, channel_first=True):
@@ -268,51 +260,48 @@ def change_brn_pars(
             change_brn_pars(target_attr, target_name, momentum, r_d_max_inc_step, r_max, d_max)
 
 
-def consolidate_weights(model, cur_clas):
+@torch.no_grad()
+def consolidate_weights(model, cur_classes):
     """ Mean-shift for the target layer weights"""
-
-    with torch.no_grad():
-        globavg = np.average(model.output.weight.detach()
-                             .cpu().numpy()[cur_clas])
-        for c in cur_clas:
-            w = model.output.weight.detach().cpu().numpy()[c]
-
-            if c in cur_clas:
-                new_w = w - globavg
-                if c in model.saved_weights.keys():
-                    wpast_j = np.sqrt(model.past_j[c] / model.cur_j[c])
-                    model.saved_weights[c] = (model.saved_weights[c] * wpast_j
-                     + new_w) / (wpast_j + 1)
-                else:
-                    model.saved_weights[c] = new_w
+    weights_np = model.output.weight.detach().cpu().numpy()
+    globavg = np.average(weights_np[cur_classes])
+    for c in cur_classes:
+        w = weights_np[c]
+        new_w = w - globavg
+        if c in model.saved_weights.keys():
+            wpast_j = np.sqrt(model.past_j[c] / model.cur_j[c])
+            model.saved_weights[c] = (model.saved_weights[c] * wpast_j + new_w) / (wpast_j + 1)
+        else:
+            model.saved_weights[c] = new_w
 
 
+@torch.no_grad()
 def set_consolidate_weights(model):
     """ set trained weights """
 
-    with torch.no_grad():
-        for c, w in model.saved_weights.items():
-            model.output.weight[c].copy_(
-                torch.from_numpy(model.saved_weights[c])
-            )
+    for c, w in model.saved_weights.items():
+        model.output.weight[c].copy_(
+            torch.from_numpy(model.saved_weights[c])
+        )
 
 
 def reset_weights(model, cur_clas):
-    """ reset weights"""
+    """ reset weights to zero for new classes, and for
+    seen classes load weights from the past"""
 
     with torch.no_grad():
         model.output.weight.fill_(0.0)
         for c, w in model.saved_weights.items():
             if c in cur_clas:
                 model.output.weight[c].copy_(
-                    torch.from_numpy(model.saved_weights[c])
+                    torch.from_numpy(w)
                 )
 
 
 def examples_per_class(train_y):
-    count = {i:0 for i in range(50)}
+    count = {i: 0 for i in range(50)}
     for y in train_y:
-        count[int(y)] +=1
+        count[int(y)] += 1
 
     return count
 
@@ -382,9 +371,8 @@ def create_syn_data(model):
 
 
 def extract_weights(model, target):
-
     with torch.no_grad():
-        weights_vector= None
+        weights_vector = None
         for name, param in model.named_parameters():
             if "bn" not in name and "output" not in name:
                 # print(name, param.flatten())
@@ -400,7 +388,7 @@ def extract_weights(model, target):
 def extract_grad(model, target):
     # Store the gradients into target
     with torch.no_grad():
-        grad_vector= None
+        grad_vector = None
         for name, param in model.named_parameters():
             if "bn" not in name and "output" not in name:
                 # print(name, param.flatten())
@@ -428,7 +416,7 @@ def post_update(net, synData):
     extract_grad(net, synData['grad'])
 
     synData['trajectory'] += synData['grad'] * (
-                    synData['new_theta'] - synData['old_theta'])
+            synData['new_theta'] - synData['old_theta'])
 
 
 def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
@@ -436,9 +424,9 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
     eps = 0.0000001  # 0.001 in few task - 0.1 used in a more complex setup
 
     synData['cum_trajectory'] += c * synData['trajectory'] / (
-                    np.square(synData['new_theta'] - ewcData[0]) + eps)
+            np.square(synData['new_theta'] - ewcData[0]) + eps)
 
-    ewcData[1] = torch.empty_like(synData['cum_trajectory'])\
+    ewcData[1] = torch.empty_like(synData['cum_trajectory']) \
         .copy_(-synData['cum_trajectory'])
 
     ewcData[1] = torch.clamp(ewcData[1], max=clip_to)
@@ -447,7 +435,6 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
 
 
 def compute_ewc_loss(model, ewcData, lambd=0):
-
     weights_vector = None
     for name, param in model.named_parameters():
         if "bn" not in name and "output" not in name:
@@ -458,17 +445,37 @@ def compute_ewc_loss(model, ewcData, lambd=0):
                     (weights_vector, param.flatten()), 0)
 
     ewcData = maybe_cuda(ewcData, use_cuda=True)
-    loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0])**2)
+    loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0]) ** 2)
     return loss
 
 
-if __name__ == "__main__":
+class AverageMeter:
+    # Sourced from: https://github.com/pytorch/examples/blob/master/imagenet/main.py
+    def __init__(self):
+        self.reset()
+        self.val = 0.0
+        self.avg = 0.0
+        self.sum = 0.0
+        self.count = 0.0
 
+    def reset(self):
+        self.val = 0.0
+        self.avg = 0.0
+        self.sum = 0.0
+        self.count = 0.0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val * n
+        self.count += n
+        self.avg = self.sum * 1.0 / self.count * 1.0
+
+
+if __name__ == "__main__":
     from models.mobilenet import MyMobilenetV1
+
     model = MyMobilenetV1(pretrained=True)
     replace_bn_with_brn(model, "net")
 
     ewcData, synData = create_syn_data(model)
     extract_weights(model, ewcData[0])
-
-
