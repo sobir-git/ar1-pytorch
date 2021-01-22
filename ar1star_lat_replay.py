@@ -162,20 +162,14 @@ for i, train_batch in enumerate(dataset):
     it_x_ep = None
     if i == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
-    shuffle_in_unison([train_x, train_y], in_place=True)
 
     model = maybe_cuda(model, use_cuda=use_cuda)
-    acc = AverageMeter()
-    ave_loss = 0
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
-    if i == 0:
-        train_ep = init_train_ep
-    else:
-        train_ep = inc_train_ep
+    train_ep = init_train_ep if i == 0 else inc_train_ep
 
-    chosen_latent_acts = None  # variable used to gather latent activations
-    chosen_y = None
+    chosen_latent_acts = None  # variable used to gather latent activations which will go into memory
+    chosen_y = None  # the corresponding labels of gathered latent activations
 
     # maximum number of latent patterns to gather for saving in memory
     h = rm_sz // (i + 1)
@@ -184,7 +178,10 @@ for i, train_batch in enumerate(dataset):
     # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
 
+        shuffle_in_unison([train_x, train_y], in_place=True)
+
         print("training ep: ", ep)
+        acc = AverageMeter()  # computes accuracy training accuracy in this epoch
         ave_loss = AverageMeter()  # compute average loss for this epoch
         train_sz = train_x.shape[0]
 
@@ -203,6 +200,7 @@ for i, train_batch in enumerate(dataset):
         for it in range(it_x_ep):
 
             if reg_lambda != 0:
+                # store current model weights in synData['oldTheta']
                 pre_update(model, synData)
 
             # compute start and end indices of the training set that go into the current mini-batch
@@ -238,9 +236,9 @@ for i, train_batch in enumerate(dataset):
             # replay memory
             if ep == 0:  #
                 if it == 0:
-                    this_h = min(h, len(lat_acts))
-                    chosen_latent_acts = lat_acts[:this_h].cpu().detach()
-                    chosen_y = y_mb[:this_h].cpu()
+                    maxtake = min(h, len(lat_acts))
+                    chosen_latent_acts = lat_acts[:maxtake].cpu().detach()
+                    chosen_y = y_mb[:maxtake].cpu()
                 elif chosen_latent_acts.size(0) < h:
                     maxtake = min(len(lat_acts), h - chosen_latent_acts.size(0))
                     if maxtake > 0:

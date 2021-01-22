@@ -374,35 +374,38 @@ def create_syn_data(model):
     return torch.zeros((2, size), dtype=torch.float32), synData
 
 
-def extract_weights(model, target):
-    with torch.no_grad():
-        weights_vector = None
+def extract_weights(model, target=None, cpu=True, detach=True, grad=False):
+    weights_vector = []
+    with torch.set_grad_enabled(grad):
         for name, param in model.named_parameters():
             if "bn" not in name and "output" not in name:
-                # print(name, param.flatten())
-                if weights_vector is None:
-                    weights_vector = param.flatten()
-                else:
-                    weights_vector = torch.cat(
-                        (weights_vector, param.flatten()), 0)
+                this_weight = param.flatten()
+                if detach:
+                    this_weight = this_weight.detach()
+                if cpu:
+                    this_weight = this_weight.cpu()
+                weights_vector.append(this_weight)
 
-        target[...] = weights_vector.cpu()
+        weights_vector = torch.cat(weights_vector, 0)
+        if target:
+            target[...] = weights_vector
+    return weights_vector
 
 
+@torch.no_grad()
 def extract_grad(model, target):
     # Store the gradients into target
-    with torch.no_grad():
-        grad_vector = None
-        for name, param in model.named_parameters():
-            if "bn" not in name and "output" not in name:
-                # print(name, param.flatten())
-                if grad_vector is None:
-                    grad_vector = param.grad.flatten()
-                else:
-                    grad_vector = torch.cat(
-                        (grad_vector, param.grad.flatten()), 0)
+    grad_vector = None
+    for name, param in model.named_parameters():
+        if "bn" not in name and "output" not in name:
+            # print(name, param.flatten())
+            if grad_vector is None:
+                grad_vector = param.grad.flatten()
+            else:
+                grad_vector = torch.cat(
+                    (grad_vector, param.grad.flatten()), 0)
 
-        target[...] = grad_vector.cpu()
+    target[...] = grad_vector.cpu()
 
 
 def init_batch(net, ewcData, synData):
@@ -439,15 +442,7 @@ def update_ewc_data(net, ewcData, synData, clip_to, c=0.0015):
 
 
 def compute_ewc_loss(model, ewcData, lambd=0):
-    weights_vector = None
-    for name, param in model.named_parameters():
-        if "bn" not in name and "output" not in name:
-            if weights_vector is None:
-                weights_vector = param.flatten()
-            else:
-                weights_vector = torch.cat(
-                    (weights_vector, param.flatten()), 0)
-
+    weights_vector = extract_weights(model, cpu=False, detach=False, grad=True)
     ewcData = maybe_cuda(ewcData, use_cuda=True)
     loss = (lambd / 2) * torch.dot(ewcData[1], (weights_vector - ewcData[0]) ** 2)
     return loss
