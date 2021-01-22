@@ -162,8 +162,6 @@ for i, train_batch in enumerate(dataset):
     it_x_ep = None
     if i == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
-    # index used to shuffle training set
-    shuffle_idx = np.random.permutation(len(train_x))
 
     model = maybe_cuda(model, use_cuda=use_cuda)
     acc = AverageMeter()
@@ -184,6 +182,9 @@ for i, train_batch in enumerate(dataset):
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
+
+        # index used to shuffle training set
+        shuffle_idx = np.random.permutation(len(train_x))
 
         print("training ep: ", ep)
         ave_loss = AverageMeter()  # compute average loss for this epoch
