@@ -128,7 +128,6 @@ freeze_up_to(model, freeze_below_layer, only_conv=False)
 for i, train_batch in enumerate(dataset):
 
     if reg_lambda != 0:
-        # clear trajectory, and store initial model weights in ewcData[0]
         init_batch(model, ewcData, synData)
 
     if i == 1:
@@ -163,26 +162,30 @@ for i, train_batch in enumerate(dataset):
     it_x_ep = None
     if i == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
+    # index used to shuffle training set
+    shuffle_idx = np.random.shuffle(len(train_x))
 
     model = maybe_cuda(model, use_cuda=use_cuda)
+    acc = AverageMeter()
+    ave_loss = 0
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
-    train_ep = init_train_ep if i == 0 else inc_train_ep
+    if i == 0:
+        train_ep = init_train_ep
+    else:
+        train_ep = inc_train_ep
 
-    chosen_latent_acts = None  # variable used to gather latent activations which will go into memory
-    chosen_y = None  # the corresponding labels of gathered latent activations
+    chosen_latent_acts = None  # variable used to gather latent activations
+    chosen_y = None
 
     # maximum number of latent patterns to gather for saving in memory
     h = rm_sz // (i + 1)
-
-    shuffle_in_unison([train_x, train_y], in_place=True)
 
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
 
         print("training ep: ", ep)
-        acc = AverageMeter()  # computes accuracy training accuracy in this epoch
         ave_loss = AverageMeter()  # compute average loss for this epoch
         train_sz = train_x.shape[0]
 
@@ -201,14 +204,13 @@ for i, train_batch in enumerate(dataset):
         for it in range(it_x_ep):
 
             if reg_lambda != 0:
-                # store current model weights in synData['oldTheta']
                 pre_update(model, synData)
 
             # compute start and end indices of the training set that go into the current mini-batch
             start = it * (mb_size - n2inject)
             end = (it + 1) * (mb_size - n2inject)
             # construct the initial mini-batch from training set
-            x_mb = train_x[start:end].astype(np.float32)
+            x_mb = train_x[shuffle_idx[start:end]].astype(np.float32)
             x_mb = preproc(x_mb)
             # convert train data to torch tensors
             x_mb = torch.from_numpy(x_mb).type(torch.FloatTensor)
@@ -217,13 +219,13 @@ for i, train_batch in enumerate(dataset):
 
             if i == 0:  # if the initial batch, then no latent patterns
                 lat_mb_x = None
-                y_mb = maybe_cuda(train_y[start:end], use_cuda=use_cuda)
+                y_mb = maybe_cuda(train_y[shuffle_idx[start:end]], use_cuda=use_cuda)
 
             else:  # otherwise get latent replay patterns from memory
                 lat_mb_x = rm[0][it * n2inject: (it + 1) * n2inject]
                 lat_mb_y = rm[1][it * n2inject: (it + 1) * n2inject]
                 y_mb = maybe_cuda(
-                    torch.cat((train_y[start:end], lat_mb_y), 0),
+                    torch.cat((train_y[shuffle_idx[start:end]], lat_mb_y), 0),
                     use_cuda=use_cuda)
                 lat_mb_x = maybe_cuda(lat_mb_x, use_cuda=use_cuda)
 
@@ -237,14 +239,14 @@ for i, train_batch in enumerate(dataset):
             # replay memory
             if ep == 0:  #
                 if it == 0:
-                    maxtake = min(h, len(lat_acts))
-                    chosen_latent_acts = lat_acts[:maxtake].cpu().detach().clone()
-                    chosen_y = y_mb[:maxtake].cpu().clone()
+                    this_h = min(h, len(lat_acts))
+                    chosen_latent_acts = lat_acts[:this_h].cpu().detach()
+                    chosen_y = y_mb[:this_h].cpu()
                 elif chosen_latent_acts.size(0) < h:
                     maxtake = min(len(lat_acts), h - chosen_latent_acts.size(0))
                     if maxtake > 0:
-                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake].cpu().detach().clone()), 0)
-                        chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu().clone()], 0)
+                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake].cpu().detach()), 0)
+                        chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu()], 0)
 
             pred_label = torch.argmax(logits, 1)
             acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
