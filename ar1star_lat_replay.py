@@ -163,7 +163,7 @@ for i, train_batch in enumerate(dataset):
     if i == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
     # index used to shuffle training set
-    shuffle_idx = np.random.shuffle(len(train_x))
+    shuffle_idx = np.random.permutation(len(train_x))
 
     model = maybe_cuda(model, use_cuda=use_cuda)
     acc = AverageMeter()
