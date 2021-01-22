@@ -175,11 +175,11 @@ for i, train_batch in enumerate(dataset):
     # maximum number of latent patterns to gather for saving in memory
     h = rm_sz // (i + 1)
 
+    shuffle_in_unison([train_x, train_y], in_place=True)
+
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
-
-        shuffle_in_unison([train_x, train_y], in_place=True)
 
         print("training ep: ", ep)
         acc = AverageMeter()  # computes accuracy training accuracy in this epoch
