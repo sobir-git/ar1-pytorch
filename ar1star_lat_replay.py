@@ -237,13 +237,16 @@ for i, train_batch in enumerate(dataset):
             # we need to store them to eventually add them into the external
             # replay memory
             if ep == 0:  #
-                lat_acts = lat_acts.cpu().detach()
                 if it == 0:
-                    chosen_latent_acts = copy.deepcopy(lat_acts[:h])
+                    lat_acts = lat_acts.cpu().detach()
+                    chosen_latent_acts = lat_acts[:h]
                     chosen_y = y_mb[:h].cpu()
                 elif chosen_latent_acts.size(0) < h:
-                    chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:h-chosen_latent_acts.size(0)]), 0)
-                    chosen_y = torch.cat([chosen_y, y_mb[:h-chosen_latent_acts.size(0)].cpu()], 0)
+                    maxtake = h - chosen_latent_acts.size(0)
+                    if maxtake > 0:
+                        lat_acts = lat_acts.cpu().detach()
+                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake]), 0)
+                        chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu()], 0)
 
             pred_label = torch.argmax(logits, 1)
             acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
@@ -279,23 +282,25 @@ for i, train_batch in enumerate(dataset):
 
     # how many patterns to save for next iter
     # replay memory should contain equal number of patterns (h) from each batch
+    h = min(h, len(chosen_latent_acts))
     print("h", h)
     print("cur_acts sz:", chosen_latent_acts.size(0))
     assert len(chosen_latent_acts) <= h
+    assert len(chosen_latent_acts) == len(chosen_y), (len(chosen_latent_acts), len(chosen_y))
 
     rm_add = [chosen_latent_acts, chosen_y]
     print("rm_add size", rm_add[0].size(0))
 
     # replace patterns in random memory
     if i == 0:  # if initial batch, just copy chosen activations, nothing to replace
-        rm = copy.deepcopy(rm_add)
+        rm = rm_add
     else:  # choose h patterns from the replay memory, which will be replaced with current patterns
         idxs_2_replace = np.random.choice(
             rm[0].size(0), h, replace=False
         )
         for j, idx in enumerate(idxs_2_replace):
-            rm[0][idx] = copy.deepcopy(rm_add[0][j])
-            rm[1][idx] = copy.deepcopy(rm_add[1][j])
+            rm[0][idx] = rm_add[0][j]
+            rm[1][idx] = rm_add[1][j]
 
     set_consolidate_weights(model)
     # test the model
