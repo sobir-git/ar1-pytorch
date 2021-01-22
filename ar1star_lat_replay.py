@@ -232,20 +232,19 @@ for i, train_batch in enumerate(dataset):
             # the forward pass on-the-fly in the latent replay layer
             logits, lat_acts = model(
                 x_mb, latent_input=lat_mb_x, return_lat_acts=True)
+            assert len(lat_acts) == len(y_mb), (len(lat_acts), len(y_mb))
 
             # collect latent volumes only for the first epoch
             # we need to store them to eventually add them into the external
             # replay memory
             if ep == 0:  #
                 if it == 0:
-                    lat_acts = lat_acts.cpu().detach()
-                    chosen_latent_acts = lat_acts[:h]
+                    chosen_latent_acts = lat_acts[:h].cpu().detach()
                     chosen_y = y_mb[:h].cpu()
                 elif chosen_latent_acts.size(0) < h:
                     maxtake = h - chosen_latent_acts.size(0)
                     if maxtake > 0:
-                        lat_acts = lat_acts.cpu().detach()
-                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake]), 0)
+                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake].cpu().detach()), 0)
                         chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu()], 0)
 
             pred_label = torch.argmax(logits, 1)
