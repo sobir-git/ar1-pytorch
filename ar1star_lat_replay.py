@@ -128,6 +128,7 @@ freeze_up_to(model, freeze_below_layer, only_conv=False)
 for i, train_batch in enumerate(dataset):
 
     if reg_lambda != 0:
+        # clear trajectory, and store initial model weights in ewcData[0]
         init_batch(model, ewcData, synData)
 
     if i == 1:
@@ -237,13 +238,13 @@ for i, train_batch in enumerate(dataset):
             if ep == 0:  #
                 if it == 0:
                     maxtake = min(h, len(lat_acts))
-                    chosen_latent_acts = lat_acts[:maxtake].cpu().detach()
-                    chosen_y = y_mb[:maxtake].cpu()
+                    chosen_latent_acts = lat_acts[:maxtake].cpu().detach().clone()
+                    chosen_y = y_mb[:maxtake].cpu().clone()
                 elif chosen_latent_acts.size(0) < h:
                     maxtake = min(len(lat_acts), h - chosen_latent_acts.size(0))
                     if maxtake > 0:
-                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake].cpu().detach()), 0)
-                        chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu()], 0)
+                        chosen_latent_acts = torch.cat((chosen_latent_acts, lat_acts[:maxtake].cpu().detach().clone()), 0)
+                        chosen_y = torch.cat([chosen_y, y_mb[:maxtake].cpu().clone()], 0)
 
             pred_label = torch.argmax(logits, 1)
             acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
