@@ -16,15 +16,27 @@
 """
 General useful functions for machine learning with Pytorch.
 """
-
-# Python 2-3 compatible
-from __future__ import print_function
-from __future__ import division
-from __future__ import absolute_import
+import logging
 
 import numpy as np
 import torch
 from models.batch_renorm import BatchRenorm2D
+
+
+def get_console_logger(name=None):
+    if name is None:
+        name = __name__
+    # global logger
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.DEBUG)
+    formatter = logging.Formatter("[%(asctime)s] %(levelname)s:%(name)s:%(message)s")
+    # console logger
+    if not logger.hasHandlers():
+        ch = logging.StreamHandler()
+        ch.setLevel(logging.DEBUG)
+        ch.setFormatter(formatter)
+        logger.addHandler(ch)
+    return logger
 
 
 def shuffle_in_unison(dataset, seed=None, in_place=False):

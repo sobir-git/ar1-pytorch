@@ -58,7 +58,7 @@ The project is structured as follows:
  algorithm.
 - [`data_loader.py`](data_loader.py): CORe50 data loader.
 - [`LICENSE`](LICENSE): CC BY 4.0 Licence file.
-- [`params.cfg`](params.cfg): Hyperparameters that will be used in the main
+- [`params.cfg`](config-nic.yaml): Hyperparameters that will be used in the main
  experiment on CORe50 NICv2-391.
 - [`README.md`](README.md): This instructions file.
 - [`utils.py`](utils.py): Utility functions used in the rest of the code.
