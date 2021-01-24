@@ -42,7 +42,7 @@ args = parser.parse_args()
 
 # recover config file for the experiment
 with open(args.config) as f:
-    config = yaml.load(args.config)
+    config = yaml.safe_load(f)
 
 logger = get_console_logger('main')
 logger.info("Experiment name: %s", args.exp_name)
@@ -50,30 +50,6 @@ pprint(dict(config))
 
 wandb.init(project='ar1', config=config)
 config = wandb.config
-
-# recover parameters from the cfg file and compute the dependent ones.
-exp_name = eval(config['exp_name'])
-comment = eval(config['comment'])
-use_cuda = eval(config['use_cuda'])
-init_lr = eval(config['init_lr'])
-inc_lr = eval(config['inc_lr'])
-mb_size = eval(config['mb_size'])
-init_train_ep = eval(config['init_train_ep'])  # training epochs for the initial batch
-inc_train_ep = eval(config['inc_train_ep'])  # training epochs for incremental batches
-init_update_rate = eval(config['init_update_rate'])
-inc_update_rate = eval(config['inc_update_rate'])
-max_r_max = eval(config['max_r_max'])
-max_d_max = eval(config['max_d_max'])
-inc_step = eval(config['inc_step'])
-rm_sz = eval(config['rm_sz'])
-momentum = eval(config['momentum'])
-l2 = eval(config['l2'])
-freeze_below_layer = eval(config['freeze_below_layer'])
-latent_layer_num = eval(config['latent_layer_num'])
-reg_lambda = eval(config['reg_lambda'])
-
-# setting up log dir for tensorboard
-log_dir = args.logdir + '/' + exp_name
 
 # Other variables init
 tot_it_step = 0
@@ -87,20 +63,20 @@ preproc = preprocess_imgs
 test_x, test_y = dataset.get_test_set()
 
 # Model setup
-model = MyMobilenetV1(pretrained=True, latent_layer_num=latent_layer_num)
+model = MyMobilenetV1(pretrained=True, latent_layer_num=config.latent_layer_num)
 
 # we replace BN layers with Batch Renormalization layers
 if config['scenario'].startswith('nic'):
     replace_bn_with_brn(
-        model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
-        max_r_max=max_r_max, max_d_max=max_d_max
+        model, momentum=config.init_update_rate, r_d_max_inc_step=config.inc_step,
+        max_r_max=config.max_r_max, max_d_max=config.max_d_max
     )
 model.saved_weights = {}
 model.past_j = {i: 0 for i in range(50)}  # number of patterns of each class seen in the past
 model.cur_j = {i: 0 for i in range(50)}  # number of patterns of each class in the current batch
 
 ewcData, synData = None, None
-if reg_lambda != 0:
+if config.reg_lambda != 0:
     # the regularization is based on Synaptic Intelligence as described in the
     # paper. ewcData is a list of two elements (best parametes, importance)
     # while synData is a dictionary with all the trajectory data needed by SI
@@ -108,28 +84,28 @@ if reg_lambda != 0:
 
 # Optimizer setup
 optimizer = torch.optim.SGD(
-    model.parameters(), lr=init_lr, momentum=momentum, weight_decay=l2
+    model.parameters(), lr=config.init_lr, momentum=config.momentum, weight_decay=config.l2
 )
 criterion = torch.nn.CrossEntropyLoss()
 
 # --------------------------------- Training -----------------------------------
 
 # we freeze the layer below the replay layer since the first batch
-freeze_up_to(model, freeze_below_layer, only_conv=False)
+freeze_up_to(model, config.freeze_below_layer, only_conv=False)
 
 # loop over the training incremental batches
 for i, train_batch in enumerate(dataset):
 
-    if reg_lambda != 0:
+    if config.reg_lambda != 0:
         init_batch(model, ewcData, synData)
 
     if i == 1:
         if config['scenario'].startswith('nic'):
             change_brn_pars(
-                model, momentum=inc_update_rate, r_d_max_inc_step=0,
-                r_max=max_r_max, d_max=max_d_max)
+                model, momentum=config.inc_update_rate, r_d_max_inc_step=0,
+                r_max=config.max_r_max, d_max=config.max_d_max)
         optimizer = torch.optim.SGD(
-            model.parameters(), lr=inc_lr, momentum=momentum, weight_decay=l2
+            model.parameters(), lr=config.inc_lr, momentum=config.momentum, weight_decay=config.l2
         )
 
     train_x, train_y = train_batch
@@ -155,23 +131,23 @@ for i, train_batch in enumerate(dataset):
     # for the first batch, pad training set to be multiple of mini-batch size
     it_x_ep = None
     if i == 0:
-        (train_x, train_y), it_x_ep = pad_data([train_x, train_y], mb_size)
+        (train_x, train_y), it_x_ep = pad_data([train_x, train_y], config.mb_size)
 
-    model = maybe_cuda(model, use_cuda=use_cuda)
+    model = maybe_cuda(model, use_cuda=config.use_cuda)
     acc = AverageMeter()
     ave_loss = 0
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
     if i == 0:
-        train_ep = init_train_ep
+        train_ep = config.init_train_ep
     else:
-        train_ep = inc_train_ep
+        train_ep = config.inc_train_ep
 
     chosen_latent_acts = None  # variable used to gather latent activations
     chosen_y = None
 
     # maximum number of latent patterns to gather for saving in memory
-    h = rm_sz // (i + 1)
+    h = config.rm_sz // (i + 1)
 
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
@@ -187,43 +163,43 @@ for i, train_batch in enumerate(dataset):
         # computing how many patterns to inject in the latent replay layer
         if i > 0:
             # a minibatch consists of patterns from the current batch and replay memory
-            cur_sz = train_sz // ((train_sz + rm_sz) // mb_size)  # number of patterns from current batch
+            cur_sz = train_sz // ((train_sz + config.rm_sz) // config.mb_size)  # number of patterns from current batch
             it_x_ep = train_sz // cur_sz  # number of iterations to complete the batch
             n2inject = max(0,
-                           mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
+                           config.mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
             n2inject = 0  # in the initial batch, the replay memory is empty
-        logger.info("total sz: %s", train_sz + rm_sz)
+        logger.info("total sz: %s", train_sz + config.rm_sz)
         logger.info("n2inject: %s", n2inject)
         logger.info("it x ep: %s", it_x_ep)
 
         for it in range(it_x_ep):
 
-            if reg_lambda != 0:
+            if config.reg_lambda != 0:
                 pre_update(model, synData)
 
             # compute start and end indices of the training set that go into the current mini-batch
-            start = it * (mb_size - n2inject)
-            end = (it + 1) * (mb_size - n2inject)
+            start = it * (config.mb_size - n2inject)
+            end = (it + 1) * (config.mb_size - n2inject)
             # construct the initial mini-batch from training set
             x_mb = train_x[shuffle_idx[start:end]].astype(np.float32)
             x_mb = preproc(x_mb)
             # convert train data to torch tensors
             x_mb = torch.from_numpy(x_mb).type(torch.FloatTensor)
 
-            x_mb = maybe_cuda(x_mb, use_cuda=use_cuda)
+            x_mb = maybe_cuda(x_mb, use_cuda=config.use_cuda)
 
             if i == 0:  # if the initial batch, then no latent patterns
                 lat_mb_x = None
-                y_mb = maybe_cuda(train_y[shuffle_idx[start:end]], use_cuda=use_cuda)
+                y_mb = maybe_cuda(train_y[shuffle_idx[start:end]], use_cuda=config.use_cuda)
 
             else:  # otherwise get latent replay patterns from memory
                 lat_mb_x = rm[0][it * n2inject: (it + 1) * n2inject]
                 lat_mb_y = rm[1][it * n2inject: (it + 1) * n2inject]
                 y_mb = maybe_cuda(
                     torch.cat((train_y[shuffle_idx[start:end]], lat_mb_y), 0),
-                    use_cuda=use_cuda)
-                lat_mb_x = maybe_cuda(lat_mb_x, use_cuda=use_cuda)
+                    use_cuda=config.use_cuda)
+                lat_mb_x = maybe_cuda(lat_mb_x, use_cuda=config.use_cuda)
 
             # if lat_mb_x is not None, this tensor will be concatenated in
             # the forward pass on-the-fly in the latent replay layer
@@ -248,15 +224,15 @@ for i, train_batch in enumerate(dataset):
             acc.update(torch.eq(pred_label, y_mb).type(torch.FloatTensor).mean().item(), len(y_mb))
 
             loss = criterion(logits, y_mb)
-            if reg_lambda != 0:
-                loss += compute_ewc_loss(model, ewcData, lambd=reg_lambda)
+            if config.reg_lambda != 0:
+                loss += compute_ewc_loss(model, ewcData, lambd=config.reg_lambda)
             ave_loss.update(loss.item(), len(y_mb))
 
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
 
-            if reg_lambda != 0:
+            if config.reg_lambda != 0:
                 post_update(model, synData)
 
             if it % 10 == 0:
@@ -272,7 +248,7 @@ for i, train_batch in enumerate(dataset):
 
     # at the end of the batch, consolidate weights
     consolidate_weights(model, cur_classes)
-    if reg_lambda != 0:
+    if config.reg_lambda != 0:
         update_ewc_data(model, ewcData, synData, 0.001, 1)
 
     # how many patterns to save for next iter
@@ -300,7 +276,7 @@ for i, train_batch in enumerate(dataset):
     set_consolidate_weights(model)
     # test the model
     test_avg_loss, test_acc, _ = get_accuracy(
-        model, criterion, mb_size, test_x, test_y, preproc=preproc
+        model, criterion, config.mb_size, test_x, test_y, preproc=preproc
     )
 
     # Log scalar values (scalar summary) to TB
