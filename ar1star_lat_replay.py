@@ -21,15 +21,12 @@ from __future__ import division
 from __future__ import absolute_import
 
 from data_loader import CORE50
-import copy
-import os
-import json
 from utils import *
-import configparser
 import argparse
 from pprint import pprint
 from models.mobilenet import MyMobilenetV1
-from torch.utils.tensorboard import SummaryWriter
+import wandb
+import yaml
 
 # --------------------------------- Setup --------------------------------------
 
@@ -40,56 +37,50 @@ parser.add_argument('--name', dest='exp_name', default='DEFAULT',
 parser.add_argument('--datadir', default='./core50',
                     help='Folder where core50 dataset exists: sessions folders, paths.pkl, LUP.pkl, labels.pkl')
 parser.add_argument('--logdir', default='../logs')
-parser.add_argument('--config', default='./params.cfg', help='Configuration file containing hyperparameters, etc.')
-
+parser.add_argument('--config', default='./config-nic.yaml', help='Configuration file containing hyperparameters, etc.')
 args = parser.parse_args()
 
-# set cuda device (based on your hardware)
-os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-
 # recover config file for the experiment
-config = configparser.ConfigParser()
-config.read(args.config)
-exp_config = config[args.exp_name]
-print("Experiment name:", args.exp_name)
-pprint(dict(exp_config))
+with open(args.config) as f:
+    config = yaml.load(args.config)
+
+logger = get_console_logger('main')
+logger.info("Experiment name: %s", args.exp_name)
+pprint(dict(config))
+
+wandb.init(project='ar1', config=config)
+config = wandb.config
 
 # recover parameters from the cfg file and compute the dependent ones.
-exp_name = eval(exp_config['exp_name'])
-comment = eval(exp_config['comment'])
-use_cuda = eval(exp_config['use_cuda'])
-init_lr = eval(exp_config['init_lr'])
-inc_lr = eval(exp_config['inc_lr'])
-mb_size = eval(exp_config['mb_size'])
-init_train_ep = eval(exp_config['init_train_ep'])  # training epochs for the initial batch
-inc_train_ep = eval(exp_config['inc_train_ep'])  # training epochs for incremental batches
-init_update_rate = eval(exp_config['init_update_rate'])
-inc_update_rate = eval(exp_config['inc_update_rate'])
-max_r_max = eval(exp_config['max_r_max'])
-max_d_max = eval(exp_config['max_d_max'])
-inc_step = eval(exp_config['inc_step'])
-rm_sz = eval(exp_config['rm_sz'])
-momentum = eval(exp_config['momentum'])
-l2 = eval(exp_config['l2'])
-freeze_below_layer = eval(exp_config['freeze_below_layer'])
-latent_layer_num = eval(exp_config['latent_layer_num'])
-reg_lambda = eval(exp_config['reg_lambda'])
+exp_name = eval(config['exp_name'])
+comment = eval(config['comment'])
+use_cuda = eval(config['use_cuda'])
+init_lr = eval(config['init_lr'])
+inc_lr = eval(config['inc_lr'])
+mb_size = eval(config['mb_size'])
+init_train_ep = eval(config['init_train_ep'])  # training epochs for the initial batch
+inc_train_ep = eval(config['inc_train_ep'])  # training epochs for incremental batches
+init_update_rate = eval(config['init_update_rate'])
+inc_update_rate = eval(config['inc_update_rate'])
+max_r_max = eval(config['max_r_max'])
+max_d_max = eval(config['max_d_max'])
+inc_step = eval(config['inc_step'])
+rm_sz = eval(config['rm_sz'])
+momentum = eval(config['momentum'])
+l2 = eval(config['l2'])
+freeze_below_layer = eval(config['freeze_below_layer'])
+latent_layer_num = eval(config['latent_layer_num'])
+reg_lambda = eval(config['reg_lambda'])
 
 # setting up log dir for tensorboard
 log_dir = args.logdir + '/' + exp_name
-writer = SummaryWriter(log_dir)
-
-# Saving params
-hyper = json.dumps(dict(exp_config))
-writer.add_text("parameters", hyper, 0)
 
 # Other variables init
 tot_it_step = 0
 rm = None
 
 # Create the dataset object
-dataset = CORE50(root=args.datadir, scenario=exp_config['scenario'])
+dataset = CORE50(root=args.datadir, scenario=config['scenario'])
 preproc = preprocess_imgs
 
 # Get the fixed test set
@@ -97,11 +88,13 @@ test_x, test_y = dataset.get_test_set()
 
 # Model setup
 model = MyMobilenetV1(pretrained=True, latent_layer_num=latent_layer_num)
+
 # we replace BN layers with Batch Renormalization layers
-replace_bn_with_brn(
-    model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
-    max_r_max=max_r_max, max_d_max=max_d_max
-)
+if config['scenario'].startswith('nic'):
+    replace_bn_with_brn(
+        model, momentum=init_update_rate, r_d_max_inc_step=inc_step,
+        max_r_max=max_r_max, max_d_max=max_d_max
+    )
 model.saved_weights = {}
 model.past_j = {i: 0 for i in range(50)}  # number of patterns of each class seen in the past
 model.cur_j = {i: 0 for i in range(50)}  # number of patterns of each class in the current batch
@@ -131,9 +124,10 @@ for i, train_batch in enumerate(dataset):
         init_batch(model, ewcData, synData)
 
     if i == 1:
-        change_brn_pars(
-            model, momentum=inc_update_rate, r_d_max_inc_step=0,
-            r_max=max_r_max, d_max=max_d_max)
+        if config['scenario'].startswith('nic'):
+            change_brn_pars(
+                model, momentum=inc_update_rate, r_d_max_inc_step=0,
+                r_max=max_r_max, d_max=max_d_max)
         optimizer = torch.optim.SGD(
             model.parameters(), lr=inc_lr, momentum=momentum, weight_decay=l2
         )
@@ -148,9 +142,9 @@ for i, train_batch in enumerate(dataset):
         cur_classes = [int(o) for o in set(train_y).union(set(rm[1]))]
         model.cur_j = examples_per_class(list(train_y) + list(rm[1]))
 
-    print("----------- batch {0} -------------".format(i))
-    print("train_x shape: {}, train_y shape: {}"
-          .format(train_x.shape, train_y.shape))
+    logger.info("----------- batch {0} -------------".format(i))
+    logger.info("train_x shape: {}, train_y shape: {}"
+                .format(train_x.shape, train_y.shape))
 
     model.train()
     model.lat_features.eval()
@@ -186,7 +180,7 @@ for i, train_batch in enumerate(dataset):
         # index used to shuffle training set
         shuffle_idx = np.random.permutation(len(train_x))
 
-        print("training ep: ", ep)
+        logger.info("training ep: %s", ep)
         ave_loss = AverageMeter()  # compute average loss for this epoch
         train_sz = train_x.shape[0]
 
@@ -195,12 +189,13 @@ for i, train_batch in enumerate(dataset):
             # a minibatch consists of patterns from the current batch and replay memory
             cur_sz = train_sz // ((train_sz + rm_sz) // mb_size)  # number of patterns from current batch
             it_x_ep = train_sz // cur_sz  # number of iterations to complete the batch
-            n2inject = max(0, mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
+            n2inject = max(0,
+                           mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
-            n2inject = 0   # in the initial batch, the replay memory is empty
-        print("total sz:", train_sz + rm_sz)
-        print("n2inject", n2inject)
-        print("it x ep: ", it_x_ep)
+            n2inject = 0  # in the initial batch, the replay memory is empty
+        logger.info("total sz: %s", train_sz + rm_sz)
+        logger.info("n2inject: %s", n2inject)
+        logger.info("it x ep: %s", it_x_ep)
 
         for it in range(it_x_ep):
 
@@ -265,7 +260,7 @@ for i, train_batch in enumerate(dataset):
                 post_update(model, synData)
 
             if it % 10 == 0:
-                print(
+                logger.info(
                     '==>>> it: {}, avg. loss: {:.6f}, '
                     'running train acc: {:.3f}'
                         .format(it, ave_loss.avg, acc.avg)
@@ -273,8 +268,7 @@ for i, train_batch in enumerate(dataset):
 
             # Log scalar values (scalar summary) to TB
             tot_it_step += 1
-            writer.add_scalar('train_loss', ave_loss.avg, tot_it_step)
-            writer.add_scalar('train_accuracy', acc.avg, tot_it_step)
+            wandb.log({'train_loss': ave_loss.avg, 'train_accuracy': acc.avg}, step=tot_it_step)
 
     # at the end of the batch, consolidate weights
     consolidate_weights(model, cur_classes)
@@ -284,13 +278,13 @@ for i, train_batch in enumerate(dataset):
     # how many patterns to save for next iter
     # replay memory should contain equal number of patterns (h) from each batch
     h = min(h, len(chosen_latent_acts))
-    print("h", h)
-    print("cur_acts sz:", chosen_latent_acts.size(0))
+    logger.info("h: %s", h)
+    logger.info("cur_acts sz: %s", chosen_latent_acts.size(0))
     assert len(chosen_latent_acts) <= h
     assert len(chosen_latent_acts) == len(chosen_y), (len(chosen_latent_acts), len(chosen_y))
 
     rm_add = [chosen_latent_acts, chosen_y]
-    print("rm_add size", rm_add[0].size(0))
+    logger.info("rm_add size: %s", rm_add[0].size(0))
 
     # replace patterns in random memory
     if i == 0:  # if initial batch, just copy chosen activations, nothing to replace
@@ -310,15 +304,12 @@ for i, train_batch in enumerate(dataset):
     )
 
     # Log scalar values (scalar summary) to TB
-    writer.add_scalar('test_loss', test_avg_loss, i)
-    writer.add_scalar('test_accuracy', test_acc, i)
+    wandb.log({'test_loss': test_avg_loss, 'test_accuracy': test_acc}, step=i)
 
     # update number examples encountered over time
     for c, n in model.cur_j.items():
         model.past_j[c] += n
 
-    print("---------------------------------")
-    print("Accuracy: ", test_acc)
-    print("---------------------------------")
-
-writer.close()
+    logger.info("---------------------------------")
+    logger.info("Accuracy: %s", test_acc)
+    logger.info("---------------------------------")
