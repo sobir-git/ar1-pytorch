@@ -55,7 +55,7 @@ config = wandb.config
 rm = None
 
 # Create the dataset object
-dataset = CORE50(root=args.datadir, scenario=config['scenario'])
+dataset = CORE50(root=args.datadir, config=config)
 preproc = preprocess_imgs
 
 # Get the fixed test set

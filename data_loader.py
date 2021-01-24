@@ -68,18 +68,16 @@ class CORE50(object):
         'nicv2_391': 391
     }
 
-    def __init__(self, root='', preload=False, scenario='ni', cumul=False,
-                 run=0, start_batch=0):
+    def __init__(self, root, config):
         """" Initialize Object """
-
         self.root = os.path.expanduser(root)
-        self.preload = preload
-        self.scenario = scenario
-        self.cumul = cumul
-        self.run = run
-        self.batch = start_batch
+        self.preload = False
+        self.scenario = config['scenario']
+        self.cumul = config['cumul']
+        self.run = config['run']
+        self.batch = 0
 
-        if preload:
+        if self.preload:
             print("Loading data...")
             bin_path = os.path.join(root, 'core50_imgs.bin')
             if os.path.exists(bin_path):
