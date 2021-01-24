@@ -35,5 +35,4 @@ l2: 0.0005
 freeze_below_layer: "lat_features.19.bn.beta"
 latent_layer_num: 19
 reg_lambda: 0
-rm: None
 scenario: nicv2_391

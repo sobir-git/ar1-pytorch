@@ -236,12 +236,12 @@ for phase, train_batch in enumerate(dataset):
             if it % 10 == 0:
                 logger.info(
                     '==>>> it: {}, avg. loss: {:.6f}, '
-                    'running train acc: {:.3f}'
-                        .format(it, ave_loss.avg, acc.avg)
+                    .format(it, ave_loss.avg)
                 )
+                wandb.log({'train_loss': ave_loss.avg})
+                ave_loss.reset()
 
-        # Log scalar values (scalar summary) to TB
-        wandb.log({'train_loss': ave_loss.avg, 'train_accuracy': acc.avg})
+        wandb.log({'train_accuracy': acc.avg})
 
     # at the end of the batch, consolidate weights
     consolidate_weights(model, cur_classes)
