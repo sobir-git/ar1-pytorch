@@ -30,7 +30,7 @@ from PIL import Image
 
 from utils import get_console_logger
 
-logger = get_console_logger()
+logger = get_console_logger('data_loader')
 
 
 class CORE50(object):
@@ -78,7 +78,7 @@ class CORE50(object):
         self.batch = 0
 
         if self.preload:
-            print("Loading data...")
+            logger.info("Loading data...")
             bin_path = os.path.join(root, 'core50_imgs.bin')
             if os.path.exists(bin_path):
                 with open(bin_path, 'rb') as f:
@@ -89,18 +89,18 @@ class CORE50(object):
                 with open(os.path.join(root, 'core50_imgs.npz'), 'rb') as f:
                     npzfile = np.load(f)
                     self.x = npzfile['x']
-                    print("Writing bin for fast reloading...")
+                    logger.info("Writing bin for fast reloading...")
                     self.x.tofile(bin_path)
 
-        print("Loading paths...")
+        logger.info("Loading paths...")
         with open(os.path.join(root, 'paths.pkl'), 'rb') as f:
             self.paths = pkl.load(f)
 
-        print("Loading LUP...")
+        logger.info("Loading LUP...")
         with open(os.path.join(root, 'LUP.pkl'), 'rb') as f:
             self.LUP = pkl.load(f)
 
-        print("Loading labels...")
+        logger.info("Loading labels...")
         with open(os.path.join(root, 'labels.pkl'), 'rb') as f:
             self.labels = pkl.load(f)
 
@@ -131,7 +131,7 @@ class CORE50(object):
             train_x = np.take(self.x, train_idx_list, axis=0) \
                 .astype(np.float32)
         else:
-            print("Loading data...")
+            logger.info("Loading data...")
             # Getting the actual paths
             train_paths = []
             for idx in train_idx_list:
@@ -224,11 +224,8 @@ class CORE50(object):
 
             for i, path in enumerate(paths):
                 if verbose:
-                    print("\r" + path + " processed: " + str(i + 1), end='')
+                    logger.info("\r" + path + " processed: " + str(i + 1), end='')
                 x[i] = np.array(Image.open(path))
-
-            if verbose:
-                print()
 
             if not on_the_fly:
                 # Then we save x

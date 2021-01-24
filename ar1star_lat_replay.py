@@ -146,6 +146,11 @@ for phase, train_batch in enumerate(dataset):
     # maximum number of latent patterns to gather for saving in memory
     h = config.rm_sz // (phase + 1)
 
+    train_sz = train_x.shape[0]
+    logger.info("total sz: %s", train_sz + config.rm_sz)
+    logger.info("n2inject: %s", n2inject)
+    logger.info("it x ep: %s", it_x_ep)
+
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
     for ep in range(train_ep):
@@ -156,7 +161,6 @@ for phase, train_batch in enumerate(dataset):
         logger.info("training ep: %s", ep)
         ave_loss = AverageMeter()  # compute average loss for this epoch
         acc = AverageMeter()
-        train_sz = train_x.shape[0]
 
         # computing how many patterns to inject in the latent replay layer
         if phase > 0:
@@ -167,12 +171,8 @@ for phase, train_batch in enumerate(dataset):
                            config.mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
             n2inject = 0  # in the initial batch, the replay memory is empty
-        logger.info("total sz: %s", train_sz + config.rm_sz)
-        logger.info("n2inject: %s", n2inject)
-        logger.info("it x ep: %s", it_x_ep)
 
         for it in range(it_x_ep):
-
             if config.reg_lambda != 0:
                 pre_update(model, synData)
 
@@ -201,8 +201,7 @@ for phase, train_batch in enumerate(dataset):
 
             # if lat_mb_x is not None, this tensor will be concatenated in
             # the forward pass on-the-fly in the latent replay layer
-            logits, lat_acts = model(
-                x_mb, latent_input=lat_mb_x, return_lat_acts=True)
+            logits, lat_acts = model(x_mb, latent_input=lat_mb_x, return_lat_acts=True)
 
             # collect latent volumes only for the first epoch
             # we need to store them to eventually add them into the external
