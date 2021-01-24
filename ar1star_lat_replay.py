@@ -147,9 +147,8 @@ for phase, train_batch in enumerate(dataset):
     h = config.rm_sz // (phase + 1)
 
     train_sz = train_x.shape[0]
-    logger.info("total sz: %s", train_sz + config.rm_sz)
-    logger.info("n2inject: %s", n2inject)
-    logger.info("it x ep: %s", it_x_ep)
+    logger.info("total training set size: %s", train_sz + config.rm_sz)
+    logger.info("num of iterations: %s", it_x_ep)
 
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
@@ -171,6 +170,7 @@ for phase, train_batch in enumerate(dataset):
                            config.mb_size - cur_sz)  # number of patterns from replay memory which will be injected at the latent layer
         else:
             n2inject = 0  # in the initial batch, the replay memory is empty
+        logger.info("n2inject: %s", n2inject)
 
         for it in range(it_x_ep):
             if config.reg_lambda != 0:
