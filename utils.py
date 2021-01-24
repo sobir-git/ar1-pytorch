@@ -39,6 +39,9 @@ def get_console_logger(name=None):
     return logger
 
 
+logger = get_console_logger()
+
+
 def shuffle_in_unison(dataset, seed=None, in_place=False):
     """
     Shuffle two (or more) list in unison. It's important to shuffle the images
@@ -347,7 +350,7 @@ def set_bn_to(m, name="", phase="train"):
 
 def freeze_up_to(model, freeze_below_layer, only_conv=False):
     if not freeze_below_layer:
-        print('No freezing layers')
+        logger.info('No freezing layers')
         return
 
     for name, param in model.named_parameters():
@@ -355,10 +358,10 @@ def freeze_up_to(model, freeze_below_layer, only_conv=False):
         if only_conv:
             if "conv" in name:
                 param.requires_grad = False
-                print("Freezing parameter " + name)
+                logger.info("Freezing parameter " + name)
         else:
             param.requires_grad = False
-            print("Freezing parameter " + name)
+            logger.info("Freezing parameter " + name)
 
         if name == freeze_below_layer:
             break
@@ -366,11 +369,11 @@ def freeze_up_to(model, freeze_below_layer, only_conv=False):
 
 def create_syn_data(model):
     size = 0
-    print('Creating Syn data for Optimal params and their Fisher info')
+    logger.info('Creating Syn data for Optimal params and their Fisher info')
 
     for name, param in model.named_parameters():
         if "bn" not in name and "output" not in name:
-            print(name, param.flatten().size(0))
+            # logger.info(name, param.flatten().size(0))
             size += param.flatten().size(0)
 
     # The first array returned is a 2D array: the first component contains
@@ -410,7 +413,7 @@ def extract_grad(model, target):
     grad_vector = None
     for name, param in model.named_parameters():
         if "bn" not in name and "output" not in name:
-            # print(name, param.flatten())
+            # logger.info(name, param.flatten())
             if grad_vector is None:
                 grad_vector = param.grad.flatten()
             else:

@@ -16,17 +16,21 @@
 """ Data Loader for the CORe50 Dataset """
 
 # Python 2-3 compatible
-from __future__ import print_function
-from __future__ import division
 from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
+import os
+import pickle as pkl
+from hashlib import md5
 
 # other imports
 import numpy as np
-import pickle as pkl
-import os
-import logging
-from hashlib import md5
 from PIL import Image
+
+from utils import get_console_logger
+
+logger = get_console_logger()
 
 
 class CORE50(object):
@@ -126,8 +130,8 @@ class CORE50(object):
 
         # loading data
         if self.preload:
-            train_x = np.take(self.x, train_idx_list, axis=0)\
-                      .astype(np.float32)
+            train_x = np.take(self.x, train_idx_list, axis=0) \
+                .astype(np.float32)
         else:
             print("Loading data...")
             # Getting the actual paths
@@ -189,16 +193,13 @@ class CORE50(object):
         """ Given a number of abs. paths it returns the numpy array
         of all the images. """
 
-        # Getting root logger
-        log = logging.getLogger('mylogger')
-
         # If we do not process data on the fly we check if the same train
         # filelist has been already processed and saved. If so, we load it
         # directly. In either case we end up returning x and y, as the full
         # training set and respective labels.
         num_imgs = len(paths)
         hexdigest = md5(''.join(paths).encode('utf-8')).hexdigest()
-        log.debug("Paths Hex: " + str(hexdigest))
+        logger.debug("Paths Hex: " + str(hexdigest))
         loaded = False
         x = None
         file_path = None
@@ -265,4 +266,3 @@ if __name__ == "__main__":
 
         # use the data
         pass
-

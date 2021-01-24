@@ -52,7 +52,6 @@ wandb.init(project='ar1', config=config)
 config = wandb.config
 
 # Other variables init
-tot_it_step = 0
 rm = None
 
 # Create the dataset object
@@ -94,12 +93,12 @@ criterion = torch.nn.CrossEntropyLoss()
 freeze_up_to(model, config.freeze_below_layer, only_conv=False)
 
 # loop over the training incremental batches
-for i, train_batch in enumerate(dataset):
+for phase, train_batch in enumerate(dataset):
 
     if config.reg_lambda != 0:
         init_batch(model, ewcData, synData)
 
-    if i == 1:
+    if phase == 1:
         if config['scenario'].startswith('nic'):
             change_brn_pars(
                 model, momentum=config.inc_update_rate, r_d_max_inc_step=0,
@@ -111,14 +110,14 @@ for i, train_batch in enumerate(dataset):
     train_x, train_y = train_batch
 
     cur_classes = None
-    if i == 0:
+    if phase == 0:
         cur_classes = [int(o) for o in set(train_y)]
         model.cur_j = examples_per_class(train_y)
     else:
         cur_classes = [int(o) for o in set(train_y).union(set(rm[1]))]
         model.cur_j = examples_per_class(list(train_y) + list(rm[1]))
 
-    logger.info("----------- batch {0} -------------".format(i))
+    logger.info("----------- batch {0} -------------".format(phase))
     logger.info("train_x shape: {}, train_y shape: {}"
                 .format(train_x.shape, train_y.shape))
 
@@ -130,15 +129,13 @@ for i, train_batch in enumerate(dataset):
 
     # for the first batch, pad training set to be multiple of mini-batch size
     it_x_ep = None
-    if i == 0:
+    if phase == 0:
         (train_x, train_y), it_x_ep = pad_data([train_x, train_y], config.mb_size)
 
     model = maybe_cuda(model, use_cuda=config.use_cuda)
-    acc = AverageMeter()
-    ave_loss = 0
     train_y = torch.from_numpy(train_y).type(torch.LongTensor)
 
-    if i == 0:
+    if phase == 0:
         train_ep = config.init_train_ep
     else:
         train_ep = config.inc_train_ep
@@ -147,7 +144,7 @@ for i, train_batch in enumerate(dataset):
     chosen_y = None
 
     # maximum number of latent patterns to gather for saving in memory
-    h = config.rm_sz // (i + 1)
+    h = config.rm_sz // (phase + 1)
 
     # loop through current batch multiple epochs
     # each epoch runs once though the training set + replay memory (if non-empty)
@@ -158,10 +155,11 @@ for i, train_batch in enumerate(dataset):
 
         logger.info("training ep: %s", ep)
         ave_loss = AverageMeter()  # compute average loss for this epoch
+        acc = AverageMeter()
         train_sz = train_x.shape[0]
 
         # computing how many patterns to inject in the latent replay layer
-        if i > 0:
+        if phase > 0:
             # a minibatch consists of patterns from the current batch and replay memory
             cur_sz = train_sz // ((train_sz + config.rm_sz) // config.mb_size)  # number of patterns from current batch
             it_x_ep = train_sz // cur_sz  # number of iterations to complete the batch
@@ -189,7 +187,7 @@ for i, train_batch in enumerate(dataset):
 
             x_mb = maybe_cuda(x_mb, use_cuda=config.use_cuda)
 
-            if i == 0:  # if the initial batch, then no latent patterns
+            if phase == 0:  # if the initial batch, then no latent patterns
                 lat_mb_x = None
                 y_mb = maybe_cuda(train_y[shuffle_idx[start:end]], use_cuda=config.use_cuda)
 
@@ -242,9 +240,8 @@ for i, train_batch in enumerate(dataset):
                         .format(it, ave_loss.avg, acc.avg)
                 )
 
-            # Log scalar values (scalar summary) to TB
-            tot_it_step += 1
-            wandb.log({'train_loss': ave_loss.avg, 'train_accuracy': acc.avg}, step=tot_it_step)
+        # Log scalar values (scalar summary) to TB
+        wandb.log({'train_loss': ave_loss.avg, 'train_accuracy': acc.avg})
 
     # at the end of the batch, consolidate weights
     consolidate_weights(model, cur_classes)
@@ -263,7 +260,7 @@ for i, train_batch in enumerate(dataset):
     logger.info("rm_add size: %s", rm_add[0].size(0))
 
     # replace patterns in random memory
-    if i == 0:  # if initial batch, just copy chosen activations, nothing to replace
+    if phase == 0:  # if initial batch, just copy chosen activations, nothing to replace
         rm = rm_add
     else:  # choose h patterns from the replay memory, which will be replaced with current patterns
         idxs_2_replace = np.random.choice(
@@ -280,7 +277,7 @@ for i, train_batch in enumerate(dataset):
     )
 
     # Log scalar values (scalar summary) to TB
-    wandb.log({'test_loss': test_avg_loss, 'test_accuracy': test_acc}, step=i)
+    wandb.log({'test_loss': test_avg_loss, 'test_accuracy': test_acc, 'phase': phase})
 
     # update number examples encountered over time
     for c, n in model.cur_j.items():
